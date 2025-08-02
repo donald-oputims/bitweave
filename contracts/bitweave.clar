@@ -98,3 +98,89 @@
   { post-id: uint, endorser: uint }
   { endorsed-at: uint, stake-amount: uint }
 )
+
+;; Profile Endorsement Network
+(define-map profile-endorsements
+  { endorser: uint, endorsed: uint }
+  { endorsed-at: uint, stake-amount: uint, message: (string-utf8 140) }
+)
+
+;; Reputation Staking Pools
+(define-map profile-stakes
+  { profile-id: uint, staker: principal }
+  { amount: uint, staked-at: uint }
+)
+
+;; Content Monetization Stakes
+(define-map post-boosts
+  { post-id: uint, booster: principal }
+  { amount: uint, boosted-at: uint }
+)
+
+;; Read-Only Functions - Data Queries
+
+;; Retrieve Profile by ID
+(define-read-only (get-profile (profile-id uint))
+  (map-get? profiles { profile-id: profile-id })
+)
+
+;; Find Profile by Username
+(define-read-only (get-profile-by-username (username (string-ascii 50)))
+  (match (map-get? username-to-profile username)
+    profile-id (get-profile profile-id)
+    none
+  )
+)
+
+;; Find Profile by Wallet Address
+(define-read-only (get-profile-by-principal (user principal))
+  (match (map-get? principal-to-profile user)
+    profile-id (get-profile profile-id)
+    none
+  )
+)
+
+;; Check Username Availability
+(define-read-only (is-username-available (username (string-ascii 50)))
+  (is-none (map-get? username-to-profile username))
+)
+
+;; Verify Following Relationship
+(define-read-only (is-following (follower-id uint) (following-id uint))
+  (match (map-get? following { follower: follower-id, following: following-id })
+    follow-data (get is-active follow-data)
+    false
+  )
+)
+
+;; Retrieve Post Data
+(define-read-only (get-post (post-id uint))
+  (map-get? posts { post-id: post-id })
+)
+
+;; Get Next Available Profile ID
+(define-read-only (get-next-profile-id)
+  (var-get next-profile-id)
+)
+
+;; Get Next Available Post ID
+(define-read-only (get-next-post-id)
+  (var-get next-post-id)
+)
+
+;; Calculate Dynamic Reputation Score
+(define-read-only (calculate-reputation-score (profile-id uint))
+  (match (get-profile profile-id)
+    profile-data
+    (let
+      (
+        (base-score (get staked-amount profile-data))
+        (follower-bonus (* (get follower-count profile-data) u1000))
+        (endorsement-bonus (* (get total-endorsements profile-data) u2000))
+        (post-bonus (* (get post-count profile-data) u500))
+      )
+      (+ base-score (+ follower-bonus (+ endorsement-bonus post-bonus)))
+    )
+    u0
+  )
+)
