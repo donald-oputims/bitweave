@@ -537,3 +537,85 @@
     )
   )
 )
+
+;; Update Profile Metadata
+(define-public (update-profile (bio (string-utf8 280)) (avatar-url (string-ascii 200)))
+  (let
+    (
+      (profile-result (map-get? principal-to-profile tx-sender))
+    )
+    (match profile-result
+      profile-id
+      (match (get-profile profile-id)
+        profile-data
+        (begin
+          ;; Update mutable profile fields
+          (map-set profiles
+            { profile-id: profile-id }
+            (merge profile-data { bio: bio, avatar-url: avatar-url })
+          )
+          (ok true)
+        )
+        ERR_PROFILE_NOT_FOUND
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Amplify Reputation through Additional Staking
+(define-public (stake-for-reputation (amount uint))
+  (let
+    (
+      (profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    ;; Verify minimum stake increment
+    (asserts! (>= amount MIN_POST_BOOST) ERR_INVALID_AMOUNT)
+    
+    ;; Verify sufficient balance
+    (asserts! (>= (stx-get-balance tx-sender) amount) ERR_INSUFFICIENT_FUNDS)
+    
+    (match profile-result
+      profile-id
+      (begin
+        ;; Lock additional reputation stake
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        
+        ;; Increase profile stake amount
+        (match (get-profile profile-id)
+          profile-data
+          (map-set profiles
+            { profile-id: profile-id }
+            (merge profile-data { staked-amount: (+ (get staked-amount profile-data) amount) })
+          )
+          false
+        )
+        
+        ;; Record additional stake commitment
+        (map-set profile-stakes
+          { profile-id: profile-id, staker: tx-sender }
+          { amount: amount, staked-at: current-block }
+        )
+        
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Administrative Functions
+
+;; Protocol Fee Management (Owner Only)
+(define-public (set-protocol-fee-rate (new-rate uint))
+  (begin
+    ;; Restrict to contract owner
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    ;; Cap maximum fee at 10%
+    (asserts! (<= new-rate u1000) ERR_INVALID_AMOUNT)
+    ;; Update protocol fee rate
+    (var-set protocol-fee-rate new-rate)
+    (ok true)
+  )
+)
