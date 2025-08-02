@@ -296,3 +296,129 @@
     )
   )
 )
+
+;; Dissolve Social Connection
+(define-public (unfollow-user (following-id uint))
+  (let
+    (
+      (follower-profile-result (map-get? principal-to-profile tx-sender))
+    )
+    ;; Resolve follower identity
+    (match follower-profile-result
+      follower-id
+      (begin
+        ;; Verify existing follow relationship
+        (asserts! (is-following follower-id following-id) ERR_NOT_FOLLOWING)
+        
+        ;; Remove social connection
+        (map-delete following { follower: follower-id, following: following-id })
+        
+        ;; Decrease follower count for unfollowed user
+        (match (get-profile following-id)
+          following-profile
+          (map-set profiles
+            { profile-id: following-id }
+            (merge following-profile { follower-count: (- (get follower-count following-profile) u1) })
+          )
+          false
+        )
+        
+        ;; Decrease following count for unfollower
+        (match (get-profile follower-id)
+          follower-profile
+          (map-set profiles
+            { profile-id: follower-id }
+            (merge follower-profile { following-count: (- (get following-count follower-profile) u1) })
+          )
+          false
+        )
+        
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Publish Content to Social Graph
+(define-public (create-post (content (string-utf8 500)))
+  (let
+    (
+      (author-profile-result (map-get? principal-to-profile tx-sender))
+      (post-id (var-get next-post-id))
+      (current-block stacks-block-height)
+    )
+    ;; Resolve author identity
+    (match author-profile-result
+      author-id
+      (begin
+        ;; Create immutable content record
+        (map-set posts
+          { post-id: post-id }
+          {
+            author: author-id,
+            content: content,
+            created-at: current-block,
+            boosted-amount: u0,
+            endorsement-count: u0,
+            is-active: true
+          }
+        )
+        
+        ;; Update author's content metrics
+        (match (get-profile author-id)
+          author-profile
+          (map-set profiles
+            { profile-id: author-id }
+            (merge author-profile { post-count: (+ (get post-count author-profile) u1) })
+          )
+          false
+        )
+        
+        ;; Increment global post counter
+        (var-set next-post-id (+ post-id u1))
+        
+        (ok post-id)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Monetize Content through Stake-Based Boosting
+(define-public (boost-post (post-id uint) (amount uint))
+  (let
+    (
+      (current-block stacks-block-height)
+    )
+    ;; Verify minimum boost threshold
+    (asserts! (>= amount MIN_POST_BOOST) ERR_INVALID_AMOUNT)
+    
+    ;; Ensure post exists
+    (asserts! (is-some (get-post post-id)) ERR_POST_NOT_FOUND)
+    
+    ;; Verify sufficient balance
+    (asserts! (>= (stx-get-balance tx-sender) amount) ERR_INSUFFICIENT_FUNDS)
+    
+    ;; Commit boost stake to protocol
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    
+    ;; Record boost commitment
+    (map-set post-boosts
+      { post-id: post-id, booster: tx-sender }
+      { amount: amount, boosted-at: current-block }
+    )
+    
+    ;; Update post's total boost value
+    (match (get-post post-id)
+      post-data
+      (map-set posts
+        { post-id: post-id }
+        (merge post-data { boosted-amount: (+ (get boosted-amount post-data) amount) })
+      )
+      false
+    )
+    
+    (ok true)
+  )
+)
