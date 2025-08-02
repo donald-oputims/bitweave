@@ -422,3 +422,118 @@
     (ok true)
   )
 )
+
+;; Stake-Based Content Endorsement System
+(define-public (endorse-post (post-id uint) (stake-amount uint))
+  (let
+    (
+      (endorser-profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    ;; Verify minimum endorsement stake
+    (asserts! (>= stake-amount MIN_ENDORSEMENT_STAKE) ERR_INVALID_AMOUNT)
+    
+    ;; Ensure target post exists
+    (asserts! (is-some (get-post post-id)) ERR_POST_NOT_FOUND)
+    
+    ;; Resolve endorser identity
+    (match endorser-profile-result
+      endorser-id
+      (begin
+        ;; Prevent duplicate endorsements
+        (asserts! (is-none (map-get? post-endorsements { post-id: post-id, endorser: endorser-id })) ERR_ALREADY_ENDORSED)
+        
+        ;; Verify sufficient stake balance
+        (asserts! (>= (stx-get-balance tx-sender) stake-amount) ERR_INSUFFICIENT_FUNDS)
+        
+        ;; Lock endorsement stake
+        (try! (stx-transfer? stake-amount tx-sender (as-contract tx-sender)))
+        
+        ;; Record stake-backed endorsement
+        (map-set post-endorsements
+          { post-id: post-id, endorser: endorser-id }
+          { endorsed-at: current-block, stake-amount: stake-amount }
+        )
+        
+        ;; Increment post endorsement counter
+        (match (get-post post-id)
+          post-data
+          (map-set posts
+            { post-id: post-id }
+            (merge post-data { endorsement-count: (+ (get endorsement-count post-data) u1) })
+          )
+          false
+        )
+        
+        ;; Boost author's reputation through endorsement
+        (match (get-post post-id)
+          post-data
+          (match (get-profile (get author post-data))
+            author-profile
+            (map-set profiles
+              { profile-id: (get author post-data) }
+              (merge author-profile { total-endorsements: (+ (get total-endorsements author-profile) u1) })
+            )
+            false
+          )
+          false
+        )
+        
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Profile-to-Profile Reputation Endorsement
+(define-public (endorse-profile (endorsed-id uint) (stake-amount uint) (message (string-utf8 140)))
+  (let
+    (
+      (endorser-profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    ;; Verify minimum endorsement stake
+    (asserts! (>= stake-amount MIN_ENDORSEMENT_STAKE) ERR_INVALID_AMOUNT)
+    
+    ;; Ensure target profile exists
+    (asserts! (is-some (get-profile endorsed-id)) ERR_PROFILE_NOT_FOUND)
+    
+    ;; Resolve endorser identity
+    (match endorser-profile-result
+      endorser-id
+      (begin
+        ;; Prevent self-endorsement
+        (asserts! (not (is-eq endorser-id endorsed-id)) ERR_UNAUTHORIZED)
+        
+        ;; Prevent duplicate profile endorsements
+        (asserts! (is-none (map-get? profile-endorsements { endorser: endorser-id, endorsed: endorsed-id })) ERR_ALREADY_ENDORSED)
+        
+        ;; Verify sufficient stake balance
+        (asserts! (>= (stx-get-balance tx-sender) stake-amount) ERR_INSUFFICIENT_FUNDS)
+        
+        ;; Lock endorsement stake
+        (try! (stx-transfer? stake-amount tx-sender (as-contract tx-sender)))
+        
+        ;; Record profile endorsement with message
+        (map-set profile-endorsements
+          { endorser: endorser-id, endorsed: endorsed-id }
+          { endorsed-at: current-block, stake-amount: stake-amount, message: message }
+        )
+        
+        ;; Boost endorsed profile's reputation metrics
+        (match (get-profile endorsed-id)
+          endorsed-profile
+          (map-set profiles
+            { profile-id: endorsed-id }
+            (merge endorsed-profile { total-endorsements: (+ (get total-endorsements endorsed-profile) u1) })
+          )
+          false
+        )
+        
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
